@@ -1,0 +1,6 @@
+{
+  "name": "FlashGuard — High-Concurrency Flash Sale Platform with AI Fraud Detection",
+  "description": "High-concurrency flash sale e-commerce platform and operations dashboard with real-time countdowns, inventory reservation, and AI fraud monitoring.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
