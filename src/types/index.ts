@@ -150,3 +150,40 @@ export type CampaignListResponse = SaleCampaign[];
 export type OrderDetailResponse = Order;
 export type FlashSaleDetailResponse = SaleCampaign;
 
+export interface ReservationRequest {
+  productId: string;
+  quantity: number;
+  userToken?: string;
+  customerEmail?: string;
+  idempotencyKey?: string;
+}
+
+export interface ReservationResponse {
+  reservationId: string;
+  productId: string;
+  quantity: number;
+  status: 'HELD' | 'CONFIRMED' | 'EXPIRED' | 'RELEASED';
+  expiresAt: string;
+  ttlSeconds: number;
+  queuePosition: number;
+  token: string;
+  idempotencyKey?: string;
+}
+
+export interface ReservationConfirmResponse {
+  reservationId: string;
+  productId: string;
+  quantity: number;
+  status: 'CONFIRMED';
+  message: string;
+}
+
+export interface ReservationReleaseResponse {
+  reservationId: string;
+  productId: string;
+  restoredQuantity: number;
+  status: 'RELEASED';
+  message: string;
+}
+
+

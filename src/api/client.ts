@@ -9,7 +9,11 @@ import {
   FraudStatus,
   OrderStatus,
   ApiErrorPayload,
+  ReservationResponse,
+  ReservationConfirmResponse,
+  ReservationReleaseResponse,
 } from '../types';
+
 import {
   INITIAL_PRODUCTS,
   INITIAL_CAMPAIGNS,
@@ -440,38 +444,122 @@ class ApiClient {
 
   // --- High-Concurrency Reservations & Queue Service ---
   public reservations = {
-    create: async (productId: string, quantity: number, userToken?: string): Promise<{
-      reservationId: string;
-      productId: string;
-      quantity: number;
-      expiresAt: string;
-      queuePosition: number;
-      token: string;
-    }> => {
+    create: async (
+      productId: string,
+      quantity: number,
+      options?: { userToken?: string; customerEmail?: string; idempotencyKey?: string }
+    ): Promise<ReservationResponse> => {
       if (this.config.isDemoMode) {
         const prod = this.productsCache.find((p) => p.id === productId);
-        if (prod && prod.availableStock >= quantity) {
-          prod.reservedStock += quantity;
-          prod.availableStock -= quantity;
-          this.saveToStorage(DEMO_PRODUCTS_KEY, this.productsCache);
+        if (!prod) {
+          throw new ApiError({
+            message: `Product ${productId} not found`,
+            statusCode: 404,
+            endpoint: '/api/v1/reservations',
+          });
+        }
+        if (prod.availableStock < quantity) {
+          throw new ApiError({
+            message: `Insufficient inventory for ${prod.name}. Available: ${prod.availableStock}, requested: ${quantity}`,
+            statusCode: 409,
+            endpoint: '/api/v1/reservations',
+          });
         }
 
+        prod.reservedStock += quantity;
+        prod.availableStock -= quantity;
+        this.saveToStorage(DEMO_PRODUCTS_KEY, this.productsCache);
+
         const reservationId = `RES-${Math.floor(1000 + Math.random() * 9000)}`;
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+        const ttlSeconds = 600;
+        const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+
         return {
           reservationId,
           productId,
           quantity,
+          status: 'HELD',
           expiresAt,
+          ttlSeconds,
           queuePosition: 1,
           token: `jwt_res_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+          idempotencyKey: options?.idempotencyKey,
         };
       }
 
-      return this.request('/api/v1/reservations', {
+      return this.request<ReservationResponse>('/api/v1/reservations', {
         method: 'POST',
-        body: JSON.stringify({ productId, quantity, userToken }),
+        body: JSON.stringify({
+          productId,
+          quantity,
+          userToken: options?.userToken,
+          customerEmail: options?.customerEmail,
+          idempotencyKey: options?.idempotencyKey,
+        }),
       });
+    },
+
+    getById: async (reservationId: string): Promise<ReservationResponse | null> => {
+      if (this.config.isDemoMode) {
+        return {
+          reservationId,
+          productId: 'prod-iphone-15',
+          quantity: 1,
+          status: 'HELD',
+          expiresAt: new Date(Date.now() + 600000).toISOString(),
+          ttlSeconds: 600,
+          queuePosition: 1,
+          token: `jwt_res_${reservationId}`,
+        };
+      }
+      try {
+        return await this.request<ReservationResponse>(`/api/v1/reservations/${reservationId}`);
+      } catch (err: any) {
+        if (err.statusCode === 404) return null;
+        throw err;
+      }
+    },
+
+    confirm: async (reservationId: string): Promise<ReservationConfirmResponse> => {
+      if (this.config.isDemoMode) {
+        return {
+          reservationId,
+          productId: 'prod-demo',
+          quantity: 1,
+          status: 'CONFIRMED',
+          message: 'Reservation confirmed upon order placement (Demo Mode)',
+        };
+      }
+      return this.request<ReservationConfirmResponse>(`/api/v1/reservations/${reservationId}/confirm`, {
+        method: 'POST',
+      });
+    },
+
+    release: async (reservationId: string): Promise<ReservationReleaseResponse> => {
+      if (this.config.isDemoMode) {
+        return {
+          reservationId,
+          productId: 'prod-demo',
+          restoredQuantity: 1,
+          status: 'RELEASED',
+          message: 'Reservation released and inventory restored (Demo Mode)',
+        };
+      }
+      return this.request<ReservationReleaseResponse>(`/api/v1/reservations/${reservationId}/release`, {
+        method: 'POST',
+      });
+    },
+
+    getStock: async (productId: string): Promise<{ productId: string; availableStock: number; reservedStock: number }> => {
+      if (this.config.isDemoMode) {
+        const prod = this.productsCache.find((p) => p.id === productId);
+        return {
+          productId,
+          availableStock: prod ? prod.availableStock : 0,
+          reservedStock: prod ? prod.reservedStock : 0,
+        };
+      }
+      return this.request(`/api/v1/reservations/stock/${productId}`);
     },
   };
 
