@@ -1,5 +1,5 @@
 import React from 'react';
-import { Zap, Search, ShoppingBag, User as UserIcon, LayoutDashboard, X } from 'lucide-react';
+import { Zap, Search, ShoppingBag, User as UserIcon, LayoutDashboard, X, Server } from 'lucide-react';
 
 interface NavbarProps {
   currentTab: 'home' | 'flash-sales' | 'upcoming' | 'categories' | 'product-detail' | 'cart' | 'orders';
@@ -24,6 +24,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenCart,
   onOpenAuth,
   onSwitchToAdmin,
+  onOpenApiConfig,
+  isDemoMode,
   user,
 }) => {
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -125,6 +127,23 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Right actions */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          {/* Backend Status / Mode Toggle */}
+          <button
+            onClick={onOpenApiConfig}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-slate-200 hover:border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-medium transition-colors cursor-pointer"
+            title="Backend API Configuration & Status"
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isDemoMode ? 'bg-amber-400' : 'bg-emerald-500 animate-pulse'
+              }`}
+            />
+            <span className="hidden lg:inline text-[11px] font-semibold text-slate-600">
+              {isDemoMode ? 'Demo Mode' : 'Live API'}
+            </span>
+            <Server className="w-3.5 h-3.5 text-slate-400" />
+          </button>
+
           {/* Cart / Active Reservation Button */}
           <button
             onClick={onOpenCart}

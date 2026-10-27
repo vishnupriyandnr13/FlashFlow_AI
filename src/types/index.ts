@@ -130,3 +130,23 @@ export interface ApiConfig {
   isDemoMode: boolean;
   timeoutMs: number;
 }
+
+export interface ApiErrorPayload {
+  message: string;
+  statusCode?: number;
+  endpoint?: string;
+  timestamp?: string;
+  isNetworkError?: boolean;
+}
+
+export interface ApiResponse<T> {
+  data: T | null;
+  error: ApiErrorPayload | null;
+  isDemo: boolean;
+}
+
+export type ProductListResponse = Product[];
+export type CampaignListResponse = SaleCampaign[];
+export type OrderDetailResponse = Order;
+export type FlashSaleDetailResponse = SaleCampaign;
+

@@ -6,11 +6,14 @@ import {
   FraudAlert,
   SystemMetrics,
   AuditLog,
+  ApiErrorPayload,
 } from './types';
 import { api } from './api/client';
 import { Navbar } from './components/common/Navbar';
 import { Footer } from './components/common/Footer';
 import { ApiConfigModal } from './components/common/ApiConfigModal';
+import { LiveErrorState } from './components/common/LiveErrorState';
+import { LiveEmptyState } from './components/common/LiveEmptyState';
 import { AuthModal } from './components/customer/AuthModal';
 import { QueueReservationModal } from './components/customer/QueueReservationModal';
 import { HomePage } from './components/customer/HomePage';
@@ -49,6 +52,7 @@ export default function App() {
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [apiError, setApiError] = useState<ApiErrorPayload | null>(null);
 
   // Cart & Reservation State
   const [cartItems, setCartItems] = useState<CartItem[]>(() => {
@@ -93,30 +97,86 @@ export default function App() {
     }
   }, [cartItems]);
 
-  // Load datasets
+  // Load datasets: Strict separation of Demo simulation vs Live Backend
   const loadAllData = useCallback(async () => {
+    setIsLoading(true);
+    setApiError(null);
+    const config = api.getConfig();
+    setIsDemoMode(config.isDemoMode);
+
     try {
-      const [prods, camps, ords, alerts, logs, metrics] = await Promise.all([
-        api.products.getAll(),
-        api.campaigns.getAll(),
-        api.orders.getAll(),
-        api.fraud.getAlerts(),
-        api.audit.getLogs(),
-        api.metrics.getMetrics(),
-      ]);
-      setProducts(prods);
-      setCampaigns(camps);
-      setOrders(ords);
-      setFraudAlerts(alerts);
-      setAuditLogs(logs);
-      setSystemMetrics(metrics);
-      setIsDemoMode(api.getConfig().isDemoMode);
-    } catch (e) {
-      console.error('Error fetching data from API Client', e);
+      if (config.isDemoMode) {
+        // DEMO MODE: load verified realistic sample dataset from local storage / cache
+        const [prods, camps, ords, alerts, logs, metrics] = await Promise.all([
+          api.products.getAll(),
+          api.campaigns.getAll(),
+          api.orders.getAll(),
+          api.fraud.getAlerts(),
+          api.audit.getLogs(),
+          api.metrics.getMetrics(),
+        ]);
+        setProducts(prods);
+        setCampaigns(camps);
+        setOrders(ords);
+        setFraudAlerts(alerts);
+        setAuditLogs(logs);
+        setSystemMetrics(metrics);
+      } else {
+        // LIVE MODE: Send real HTTP requests to configured FastAPI backend
+        // STRICT: If this fails, do NOT silently fall back to mock data!
+        const [prods, camps] = await Promise.all([
+          api.products.list(),
+          api.campaigns.list(),
+        ]);
+        setProducts(prods);
+        setCampaigns(camps);
+
+        // Fetch optional admin and operational records if available on FastAPI
+        try {
+          const [ords, alerts, logs, metrics] = await Promise.all([
+            api.orders.getAll(),
+            api.fraud.getAlerts(),
+            api.audit.getLogs(),
+            api.metrics.getMetrics(),
+          ]);
+          setOrders(ords);
+          setFraudAlerts(alerts);
+          setAuditLogs(logs);
+          setSystemMetrics(metrics);
+        } catch {
+          setOrders([]);
+          setFraudAlerts([]);
+          setAuditLogs([]);
+        }
+      }
+    } catch (err: any) {
+      console.error('Error fetching data from backend:', err);
+      if (!config.isDemoMode) {
+        setProducts([]);
+        setCampaigns([]);
+        setApiError(
+          err.toPayload
+            ? err.toPayload()
+            : {
+                message: err.message || 'Failed to connect to backend',
+                endpoint: err.endpoint || '/api/v1/products',
+                statusCode: err.statusCode || 0,
+                isNetworkError: true,
+                timestamp: new Date().toISOString(),
+              }
+        );
+      }
     } finally {
       setIsLoading(false);
     }
   }, []);
+
+  const handleSwitchToDemoMode = useCallback(() => {
+    api.setDemoMode(true);
+    setIsDemoMode(true);
+    setApiError(null);
+    loadAllData();
+  }, [loadAllData]);
 
   useEffect(() => {
     loadAllData();
@@ -190,11 +250,15 @@ export default function App() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-        <div className="w-12 h-12 rounded-2xl bg-indigo-600 animate-pulse flex items-center justify-center text-white mb-4">
+        <div className="w-12 h-12 rounded-2xl bg-indigo-600 animate-pulse flex items-center justify-center text-white mb-4 shadow-lg shadow-indigo-600/20">
           <span className="font-bold text-xl">⚡</span>
         </div>
-        <div className="text-sm font-bold text-slate-800">Initializing FlashGuard Platform</div>
-        <div className="text-xs text-slate-400 mt-1">Connecting client service modules...</div>
+        <div className="text-sm font-bold text-slate-800">
+          {isDemoMode ? 'Initializing FlashGuard Platform' : 'Connecting to Live FastAPI Backend'}
+        </div>
+        <div className="text-xs text-slate-400 mt-1 font-mono">
+          {isDemoMode ? 'Loading local simulation modules...' : `GET ${api.getConfig().baseUrl}/api/v1/products`}
+        </div>
       </div>
     );
   }
@@ -215,6 +279,33 @@ export default function App() {
         onOpenApiConfig={() => setIsApiModalOpen(true)}
         isDemoMode={isDemoMode}
       >
+        {!isDemoMode && apiError && (
+          <div className="mb-6 p-4 bg-rose-50 border border-rose-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5 text-rose-800">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse shrink-0" />
+              <div>
+                <span className="font-bold">FastAPI Connection Error: </span>
+                <span className="text-slate-700">{apiError.message}</span>
+                <span className="text-slate-400 font-mono ml-2">({api.getConfig().baseUrl})</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={loadAllData}
+                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-medium rounded-lg transition-colors cursor-pointer"
+              >
+                Retry
+              </button>
+              <button
+                onClick={handleSwitchToDemoMode}
+                className="px-3 py-1.5 bg-white border border-rose-200 hover:bg-rose-50 text-rose-800 font-medium rounded-lg transition-colors cursor-pointer"
+              >
+                Switch to Demo
+              </button>
+            </div>
+          </div>
+        )}
+
         {adminTab === 'overview' && (
           <AdminOverviewPage
             products={products}
@@ -284,63 +375,81 @@ export default function App() {
 
       {/* Main Body */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        {customerTab === 'home' && (
-          <HomePage
-            products={products}
-            campaigns={campaigns}
-            onSelectProduct={handleSelectProduct}
-            onBuyNow={handleInitiateBuyNow}
-            onNavigateToTab={(tab) => {
-              setCustomerTab(tab);
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
-            searchQuery={searchQuery}
-            onSearchChange={setSearchQuery}
+        {!isDemoMode && apiError ? (
+          <LiveErrorState
+            error={apiError}
+            baseUrl={api.getConfig().baseUrl}
+            onRetry={loadAllData}
+            onSwitchToDemo={handleSwitchToDemoMode}
+            onOpenSettings={() => setIsApiModalOpen(true)}
           />
-        )}
-
-        {customerTab === 'flash-sales' && (
-          <FlashSalesPage
-            products={products}
-            onSelectProduct={handleSelectProduct}
-            onBuyNow={handleInitiateBuyNow}
-            onNavigateHome={() => setCustomerTab('home')}
-            searchQuery={searchQuery}
-            onSearchChange={setSearchQuery}
+        ) : !isDemoMode && products.length === 0 ? (
+          <LiveEmptyState
+            baseUrl={api.getConfig().baseUrl}
+            onRefresh={loadAllData}
+            onSwitchToDemo={handleSwitchToDemoMode}
           />
-        )}
+        ) : (
+          <>
+            {customerTab === 'home' && (
+              <HomePage
+                products={products}
+                campaigns={campaigns}
+                onSelectProduct={handleSelectProduct}
+                onBuyNow={handleInitiateBuyNow}
+                onNavigateToTab={(tab) => {
+                  setCustomerTab(tab);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                searchQuery={searchQuery}
+                onSearchChange={setSearchQuery}
+              />
+            )}
 
-        {customerTab === 'upcoming' && (
-          <UpcomingSalesPage
-            products={products}
-            campaigns={campaigns}
-            onSelectProduct={handleSelectProduct}
-            onNavigateHome={() => setCustomerTab('home')}
-            searchQuery={searchQuery}
-          />
-        )}
+            {customerTab === 'flash-sales' && (
+              <FlashSalesPage
+                products={products}
+                onSelectProduct={handleSelectProduct}
+                onBuyNow={handleInitiateBuyNow}
+                onNavigateHome={() => setCustomerTab('home')}
+                searchQuery={searchQuery}
+                onSearchChange={setSearchQuery}
+              />
+            )}
 
-        {customerTab === 'product-detail' && selectedProduct && (
-          <ProductDetailPage
-            product={selectedProduct}
-            onBack={() => setCustomerTab('home')}
-            onBuyNow={(prod, qty) => handleInitiateBuyNow(prod, qty)}
-            onAddToCart={handleAddToCart}
-          />
-        )}
+            {customerTab === 'upcoming' && (
+              <UpcomingSalesPage
+                products={products}
+                campaigns={campaigns}
+                onSelectProduct={handleSelectProduct}
+                onNavigateHome={() => setCustomerTab('home')}
+                searchQuery={searchQuery}
+              />
+            )}
 
-        {customerTab === 'cart' && (
-          <CartPage
-            cartItems={cartItems}
-            onUpdateQuantity={handleUpdateCartQuantity}
-            onRemoveItem={handleRemoveFromCart}
-            onOrderSuccess={handleOrderSuccess}
-            onNavigateHome={() => setCustomerTab('home')}
-          />
-        )}
+            {customerTab === 'product-detail' && selectedProduct && (
+              <ProductDetailPage
+                product={selectedProduct}
+                onBack={() => setCustomerTab('home')}
+                onBuyNow={(prod, qty) => handleInitiateBuyNow(prod, qty)}
+                onAddToCart={handleAddToCart}
+              />
+            )}
 
-        {customerTab === 'orders' && (
-          <OrdersPage orders={orders} onNavigateHome={() => setCustomerTab('home')} />
+            {customerTab === 'cart' && (
+              <CartPage
+                cartItems={cartItems}
+                onUpdateQuantity={handleUpdateCartQuantity}
+                onRemoveItem={handleRemoveFromCart}
+                onOrderSuccess={handleOrderSuccess}
+                onNavigateHome={() => setCustomerTab('home')}
+              />
+            )}
+
+            {customerTab === 'orders' && (
+              <OrdersPage orders={orders} onNavigateHome={() => setCustomerTab('home')} />
+            )}
+          </>
         )}
       </main>
 
@@ -372,6 +481,7 @@ export default function App() {
         product={queueModalProduct?.product || null}
         quantity={queueModalProduct?.quantity || 1}
         onProceedToCheckout={handleReservationSuccess}
+        onSwitchToDemoMode={handleSwitchToDemoMode}
       />
     </div>
   );
